@@ -237,11 +237,34 @@ docker build -t frontend-app .
 ```
 # Run frontend container with bind volume for live development
 docker run -itd --rm --name frontend-app \
+  --network net1 \
   -p 8080:80 \
   -v ~/Three-Tier-App/frontend:/app \
   frontend-app:latest
 ```
 
+# Build frontend locally first
+cd frontend
+npm run build
+cd ..
+
+
+docker run -it --rm --name frontend-app \
+  --network net1 \
+  -p 8080:80 \
+  -v "$PWD/frontend/build":/usr/share/nginx/html \
+  frontend-app:latest
+
+
+Browser → http://localhost:8080/api/users
+    ↓
+nginx (frontend container) 
+    ↓
+proxy_pass http://backend-app:5001
+    ↓
+Backend container (internal Docker network)
+    ↓
+Database container
 
 # TMPFS VOlUME
 
@@ -260,8 +283,8 @@ chmod 600 backend-secrets.env
 ```
 # Run with tmpfs for secrets
 docker run -d \
-  --name backend-app \
-  --network three-tier-network \
+  --name backend-app-tmpfs \
+  --network net1 \
   -p 5001:5001 \
   --tmpfs /run/secrets:size=1024m \
   -v $(pwd)/backend-secrets.env:/run/secrets/env:ro \
@@ -443,15 +466,15 @@ Access: curl http://192.168.1.100:80  (direct access, no NAT!)
 # Run nginx on bridge with port mapping
 docker run -d \
   --name nginx-bridge \
-  -p 8080:80 \
+  -p 9090:80 \
   nginx
 
 # Check container's IP
-docker inspect nginx-bridge --format='{{.NetworkSettings.IPAddress}}'
+docker inspect nginx-bridge
 # Output: 172.17.0.2  ← Private IP
 
 # Check from host
-curl http://localhost:8080  ✅ Works (port 8080 mapped to container's 80)
+curl http://localhost:9090  ✅ Works (port 9090 mapped to container's 80)
 curl http://localhost:80    ❌ Fails (nothing on host's port 80)
 
 # Check listening ports on host
@@ -462,22 +485,41 @@ netstat -tuln | grep 8080
 # Request → Host:8080 → Docker proxy → NAT → Container:80
 
 
+create custom-nginx.conf listens on a different port like 8081:
+
+```
+  server {
+      listen 8081;
+      server_name localhost;
+      location / {
+          root /usr/share/nginx/html;
+          index index.html;
+      }
+  }
+
+```
+
+
 # Run nginx on host network (NO -p flag!)
-docker run -d \
-  --name nginx-host \
-  --network host \
-  nginx
+  docker run -it \
+    --name nginx-host \
+    --network host \
+    -v $(pwd)/custom-nginx.conf:/etc/nginx/conf.d/default.conf \
+    nginx
 
 # Check container's IP
-docker inspect nginx-host --format='{{.NetworkSettings.IPAddress}}'
+docker inspect nginx-host 
 # Output: (empty) ← No separate IP!
 
 # Container uses host's network stack directly
-docker exec nginx-host ip addr
+docker exec -it nginx-host /bin/sh
+
+apt-get update 
+apt-get install -y iproute2
 # Shows: 192.168.1.100 (same as host!)
 
 # Check from host
-curl http://localhost:80    ✅ Works directly!
+curl http://localhost:8081    ✅ Works directly!
 curl http://localhost:8080  ❌ Nothing (we didn't use -p, and it's ignored anyway)
 
 # Check listening ports on host

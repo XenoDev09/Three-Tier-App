@@ -16,5 +16,5 @@ COPY src/ ./src/
 
 EXPOSE 5001
 
-CMD ["node", "src/server.js"]
-# CMD ["./entrypoint.sh"]
+# CMD ["node", "src/server.js"]
+CMD ["./entrypoint.sh"]
