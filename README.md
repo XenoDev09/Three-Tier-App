@@ -40,8 +40,8 @@
 
 ```
 docker run -itd --rm --name devops-postgres \
-  -e POSTGRES_DB=devops_user \
-  -e POSTGRES_USER=devops_password \
+  -e POSTGRES_DB=devops \
+  -e POSTGRES_USER=devops_user \
   -e POSTGRES_PASSWORD=devops1234 \
   -p 5432:5432 postgres:15-alpine
 ```
@@ -112,11 +112,106 @@ DATABASE_URL=postgresql://devops_user:devops_password@localhost:5432/devops
 REACT_APP_API_URL=http://localhost:3001/api
 ```
 
+# Create backend image with entrypoint
+
+```
+CMD ["./entrypoint.sh"]
+```
+
+```
+docker build -t backend-app-wm:latest ./backend  
+
+```
+
+# Create backend image without entrypoint
+```
+CMD ["node", "src/server.js"]
+```
+```
+docker build -t backend-app:latest ./backend  
+
+```
+
+# Create container with backend app
+
+```
+docker run -it --name backend-app --rm \
+  -p 5001:5001 \
+  backend-app:latest
+
+```
+
+### Try to open it from host in port 5001 it will not open in HOST
+
+as we have expose the port in 5001 in host but the server will run on PORT 3001 as env is not provided in environment variable
+
+
+```
+docker run -it --name backend-app --rm \
+  -p 5001:5001 \
+  -e PORT=5001 \
+  backend-app:latest
+
+```
+
+Now access from outside on ip:port
+
+
+Let the PORT=5002 npm run dev keep on running
+
+see what is the behaviour
+
+
+Let's create a network
+
+
+docker network create net1
+
+docker network ls
+
+### Database
+```
+docker run -itd --rm --name devops-postgres \
+  --network net1 \
+  -e POSTGRES_DB=devops \
+  -e POSTGRES_USER=devops_user \
+  -e POSTGRES_PASSWORD=devops1234 \
+  -p 5432:5432 postgres:15-alpine
+```
+
+### Backend
+```
+docker run -it --name backend-app --rm \
+  --network net1 \
+  -p 5001:5001 \
+  -e PORT=5001 \
+  -e DATABASE_URL=postgresql://devops_user:devops1234@devops-postgres:5432/devops \
+  backend-app-wm:latest
+
+```
+
+Access now
+http://172.16.115.129:5001/api/users
+
+
+
+Now make a POST request using ThunderClient
+
+with body
+{
+  "name": "Bibek Labh",
+  "email": "bkarna@gmail.com"
+}
+
+Now stop database and backend and restart again the data is gone
+
+
 # Volumes
 
 # Use volume
 ```
-docker run -itd --name --rm devops-postgres \
+docker run -itd --rm --name devops-postgres \
+  --network net1 \
   -e POSTGRES_DB=devops \
   -e POSTGRES_USER=devops_user \
   -e POSTGRES_PASSWORD=devops1234 \
@@ -125,24 +220,61 @@ docker run -itd --name --rm devops-postgres \
   postgres:15-alpine
 ```
 
+docker run -it --name backend-app --rm \
+  --network net1 \
+  -p 5001:5001 \
+  -e PORT=5001 \
+  -e DATABASE_URL="postgresql://devops_user:devops1234@devops-postgres:5432/devops" \
+  backend-app-wm:latest
+
 
 # Use local directory as bind volumes
-```
-mkdir -p ~/postgres-data
+Build frontend
+
+
+docker build -t frontend-app .
 
 ```
-
-```
-docker run -itd --rm --name devops-postgres \
-  -e POSTGRES_DB=devops \
-  -e POSTGRES_USER=devops_user \
-  -e POSTGRES_PASSWORD=devops1234 \
-  -p 5432:5432 \
-  -v ~/postgres-data:/var/lib/postgresql/data \
-  postgres:15-alpine
+# Run frontend container with bind volume for live development
+docker run -itd --rm --name frontend-app \
+  -p 8080:80 \
+  -v ~/Three-Tier-App/frontend:/app \
+  frontend-app:latest
 ```
 
 
+# TMPFS VOlUME
+
+# Create secrets file (DO NOT commit to git!)
+```
+cat > backend-secrets.env << 'EOF'
+DATABASE_URL=postgresql://devops_user:devops_password@postgres-db:5432/devops
+NODE_ENV=production
+JWT_SECRET=your-super-secret-jwt-key
+EOF
+
+# Secure the file
+chmod 600 backend-secrets.env
+```
+
+```
+# Run with tmpfs for secrets
+docker run -d \
+  --name backend-app \
+  --network three-tier-network \
+  -p 5001:5001 \
+  --tmpfs /run/secrets:size=1024m \
+  -v $(pwd)/backend-secrets.env:/run/secrets/env:ro \
+  backend-app:latest
+
+
+# Write multiple files to reach 4GB
+docker exec backend-app sh -c 'dd if=/dev/zero of=/run/secrets/test1 bs=1M count=1024'  # 1GB
+docker exec backend-app sh -c 'dd if=/dev/zero of=/run/secrets/test2 bs=1M count=1024'  # 1GB
+docker exec backend-app sh -c 'dd if=/dev/zero of=/run/secrets/test3 bs=1M count=1024'  # 1GB
+docker exec backend-app sh -c 'dd if=/dev/zero of=/run/secrets/test4 bs=1M count=1024'  # 1GB
+
+```
 
 ### EXIT STATUS
 
@@ -220,3 +352,137 @@ docker run --name backend-app \
   backend-app:latest
 ```
 
+
+1. Bridge Network (Default) 🌉
+What it is: Creates a private internal network on your host. Containers can talk to each other, and Docker does NAT to access the internet.
+When to use: Default for most applications, microservices on single host
+
+Host Machine (192.168.1.100)
+    │
+    ├─ docker0 bridge (172.17.0.1)
+    │   │
+    │   ├─ container1 (172.17.0.2)
+    │   ├─ container2 (172.17.0.3)
+    │   └─ container3 (172.17.0.4)
+    │
+    └─ Internet ←→ NAT ←→ containers
+
+
+2. Host Network 🏠
+What it is: Container shares the host's network stack directly. No network isolation!
+When to use: Maximum performance, monitoring tools, network utilities
+
+
+Host Machine (192.168.1.100)
+    │
+    └─ Container (uses host's 192.168.1.100 directly)
+       No NAT, no bridge, no isolation!
+
+
+Overlay Network ☁️
+What it is: Multi-host networking for Docker Swarm. Containers on different machines can communicate!
+When to use: Docker Swarm, distributed applications, microservices across hosts
+
+
+Host 1 (192.168.1.10)          Host 2 (192.168.1.20)
+    │                              │
+    ├─ container1 ←─────┬─────→ ├─ container3
+    │  (10.0.0.2)       │         │  (10.0.0.4)
+    │                   │         │
+    ├─ container2       │         ├─ container4
+       (10.0.0.3)       │            (10.0.0.5)
+                        │
+                VXLAN Tunnel (overlay)
+         (Encrypted cross-host communication)
+
+
+
+None Network 🚫
+What it is: No network at all! Complete isolation.
+When to use: Maximum security, batch processing, testing
+
+
+Container
+    │
+    └─ No network interface 
+       Can't access anything!
+
+
+
+
+Your Host Machine (192.168.1.100)
+    │
+    ├─ eth0 (192.168.1.100) ← Host's real IP
+    │
+    └─ docker0 bridge (172.17.0.1) ← Virtual bridge
+        │
+        ├─ nginx container (172.17.0.2) ← Private IP
+        │   Port 80 inside container
+        │   │
+        │   └─ NAT/Port Forward ─→ Host's port 8080
+        │
+        └─ Internet ←─ NAT ─→ Container
+
+Access: curl http://192.168.1.100:8080  (goes through NAT to container's port 80)
+
+
+
+Your Host Machine (192.168.1.100)
+    │
+    └─ eth0 (192.168.1.100) ← Container uses THIS directly!
+        │
+        └─ nginx container (uses host's 192.168.1.100)
+            Port 80 ← Binds directly to host's port 80
+            │
+            └─ No NAT, No bridge, No translation!
+
+Access: curl http://192.168.1.100:80  (direct access, no NAT!)
+
+
+
+# Run nginx on bridge with port mapping
+docker run -d \
+  --name nginx-bridge \
+  -p 8080:80 \
+  nginx
+
+# Check container's IP
+docker inspect nginx-bridge --format='{{.NetworkSettings.IPAddress}}'
+# Output: 172.17.0.2  ← Private IP
+
+# Check from host
+curl http://localhost:8080  ✅ Works (port 8080 mapped to container's 80)
+curl http://localhost:80    ❌ Fails (nothing on host's port 80)
+
+# Check listening ports on host
+netstat -tuln | grep 8080
+# tcp  0.0.0.0:8080  ← Docker proxy listening
+
+# What's happening:
+# Request → Host:8080 → Docker proxy → NAT → Container:80
+
+
+# Run nginx on host network (NO -p flag!)
+docker run -d \
+  --name nginx-host \
+  --network host \
+  nginx
+
+# Check container's IP
+docker inspect nginx-host --format='{{.NetworkSettings.IPAddress}}'
+# Output: (empty) ← No separate IP!
+
+# Container uses host's network stack directly
+docker exec nginx-host ip addr
+# Shows: 192.168.1.100 (same as host!)
+
+# Check from host
+curl http://localhost:80    ✅ Works directly!
+curl http://localhost:8080  ❌ Nothing (we didn't use -p, and it's ignored anyway)
+
+# Check listening ports on host
+netstat -tuln | grep 80
+# tcp  0.0.0.0:80  ← nginx listening directly on host's port!
+
+# What's happening:
+# Request → Host:80 → nginx (no translation!)
