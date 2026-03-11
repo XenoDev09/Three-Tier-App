@@ -36,6 +36,8 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+        env:
+          REACT_APP_API_URL: https://api.nischal08.tech/api
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
