@@ -27,7 +27,7 @@ jobs:
         working-directory: backend
 
     steps:
-      - name: Checkout repository of backend
+      - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Configure AWS credentials (OIDC)
