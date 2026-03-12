@@ -6,6 +6,7 @@ on:
       - dev
     paths:
       - 'backend/**'
+      - '.github/workflows/backend.yml'
 
 permissions:
   id-token: write
@@ -32,19 +33,17 @@ jobs:
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::717728193465:role/instanceRoleNischal
+          role-to-assume: arn:aws:iam::717728193465:role/github-actions-s3-deploy
           aws-region: ${{ env.AWS_REGION }}
 
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
       - name: Build Docker image
-        run: |
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        run: docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
 
       - name: Push Docker image
-        run: |
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        run: docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
 
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v1.0.3
@@ -53,10 +52,13 @@ jobs:
           username: ubuntu
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 717728193465.dkr.ecr.us-east-1.amazonaws.com
             docker stop backend || true
             docker rm backend || true
-            docker pull 717728193465.dkr.ecr.us-east-1.amazonaws.com/devops-backend:latest
+            docker pull 717728193465.dkr.ecr.us-east-1.amazonaws.com/three-tier-backend:latest
             docker run -d \
               --name backend \
               -p 3001:3001 \
-              717728193465.dkr.ecr.us-east-1.amazonaws.com/devops-backend:latest
+              --env-file /home/ubuntu/app/backend.env \
+              --restart always \
+              717728193465.dkr.ecr.us-east-1.amazonaws.com/three-tier-backend:latest
